@@ -1,83 +1,119 @@
+# Import necessary libraries and models
 import pandas as pd
-import numpy as np
-import time
-import streamlit as st
 import string
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.preprocessing import LabelEncoder
+import joblib
+import streamlit as st
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
-from sklearn import metrics
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
 
-# Load the datasets
-st.write('Loading datasets...')
-train_articles = pd.read_csv('https://raw.githubusercontent.com/Jana-Liebenberg/2401PTDS_Classification_Project/refs/heads/main/Data/processed/train.csv')  
-test_articles = pd.read_csv('https://raw.githubusercontent.com/Jana-Liebenberg/2401PTDS_Classification_Project/refs/heads/main/Data/processed/test.csv')    
-
-# Drop the 'url' column
-st.write('Dropping URL column...')
-train_articles.drop(columns=['url'], inplace=True, errors='ignore')
-test_articles.drop(columns=['url'], inplace=True, errors='ignore')
-
-# Combine text columns for training and test sets
-train_articles['combined_text'] = train_articles['headlines'] + ' ' + train_articles['description'] + ' ' + train_articles['content']
-test_articles['combined_text'] = test_articles['headlines'] + ' ' + test_articles['description'] + ' ' + test_articles['content']
-
-# Convert all text in the 'combined_text' column to lowercase
-st.write('Lowering case...')
-train_articles['combined_text'] = train_articles['combined_text'].str.lower()
-test_articles['combined_text'] = test_articles['combined_text'].str.lower()
-
-# Define a function to remove punctuation and numbers
-st.write('Cleaning punctuation...')
-def remove_punctuation_numbers(post):
+# Preprocess function to clean input text
+def preprocess_text(text):
+    text = text.lower()
     punc_numbers = string.punctuation + '0123456789'
-    return ''.join([l for l in post if l not in punc_numbers])
+    return ''.join([char for char in text if char not in punc_numbers])
 
-train_articles['combined_text'] = train_articles['combined_text'].apply(remove_punctuation_numbers)
-test_articles['combined_text'] = test_articles['combined_text'].apply(remove_punctuation_numbers)
+# Step 1: Load and prepare the dataset
+def load_data():
+    # Load training and testing data
+    train_articles = pd.read_csv('https://raw.githubusercontent.com/Jana-Liebenberg/2401PTDS_Classification_Project/refs/heads/main/Data/processed/train.csv')  
+    test_articles = pd.read_csv('https://raw.githubusercontent.com/Jana-Liebenberg/2401PTDS_Classification_Project/refs/heads/main/Data/processed/test.csv')    
 
-# Vectorize the text
-vect = CountVectorizer(stop_words='english')
-X_train = vect.fit_transform(train_articles['combined_text'])
-X_test = vect.transform(test_articles['combined_text'])
+    # Combine text columns
+    train_articles['combined_text'] = train_articles['headlines'] + ' ' + train_articles['description'] + ' ' + train_articles['content']
+    test_articles['combined_text'] = test_articles['headlines'] + ' ' + test_articles['description'] + ' ' + test_articles['content']
 
-# Encode the target variable
-le = LabelEncoder()
-y_train = le.fit_transform(train_articles['category'])
-y_test = le.transform(test_articles['category'])
+    # Clean the text
+    train_articles['combined_text'] = train_articles['combined_text'].apply(preprocess_text)
+    test_articles['combined_text'] = test_articles['combined_text'].apply(preprocess_text)
 
-# Train a classifier (e.g., Logistic Regression)
-st.write("Training Logistic Regression model...")
-clf = LogisticRegression()
-clf.fit(X_train, y_train)
+    return train_articles, test_articles
 
-# Create a function to predict new inputs
-def predict_category(text, model, vectorizer, label_encoder):
-    clean_text = remove_punctuation_numbers(text.lower())  # Clean the input text
-    transformed_text = vectorizer.transform([clean_text])  # Vectorize the text
-    prediction = model.predict(transformed_text)  # Make a prediction
-    return label_encoder.inverse_transform(prediction)[0]  # Decode the label
+# Step 2: Model training and saving function
+def train_and_save_models():
+    # Load data
+    train_articles, test_articles = load_data()
 
-# User Input Section
-st.write("## Predict Article Category")
-user_input = st.text_area("Enter the text of a news article:", "")
+    # Initialize vectorizer
+    vect = CountVectorizer(stop_words='english')
 
-if st.button('Predict Category'):
-    if user_input:
-        predicted_category = predict_category(user_input, clf, vect, le)
-        st.write(f"The predicted category is: **{predicted_category}**")
+    # Fit the vectorizer on the training set and transform the text
+    X_train = vect.fit_transform(train_articles['combined_text'])
+    y_train = train_articles['category']
+
+    # Initialize label encoder to encode the labels
+    le = LabelEncoder()
+    y_train_encoded = le.fit_transform(y_train)
+
+    # Define models
+    models = {
+        'Logistic Regression': LogisticRegression(),
+        'KNN': KNeighborsClassifier(3),
+        'SVC Linear': SVC(kernel="linear", C=0.025),
+        'SVC RBF': SVC(gamma=2, C=1)
+    }
+
+    # Fit and save each model
+    for name, model in models.items():
+        model.fit(X_train, y_train_encoded)
+        joblib.dump(model, f'{name}.pkl')
+
+    # Save the vectorizer and label encoder
+    joblib.dump(vect, 'vectorizer.pkl')
+    joblib.dump(le, 'label_encoder.pkl')
+
+# Step 3: Streamlit UI for classification
+def classify_text():
+    st.title("News Article Classifier")
+
+    # Input box for users to paste news articles
+    input_text = st.text_area("Enter the news article text here:")
+
+    # Load the saved vectorizer and label encoder
+    vect = joblib.load('vectorizer.pkl')
+    le = joblib.load('label_encoder.pkl')
+
+    # Load the models
+    models = {
+        'Logistic Regression': joblib.load('Logistic Regression.pkl'),
+        'KNN': joblib.load('KNN.pkl'),
+        'SVC Linear': joblib.load('SVC Linear.pkl'),
+        'SVC RBF': joblib.load('SVC RBF.pkl')
+    }
+
+    # Dropdown to select the model
+    model_name = st.selectbox("Choose a model", list(models.keys()))
+
+    # Button to trigger classification
+    if st.button("Classify"):
+        if input_text:
+            # Preprocess and vectorize input
+            cleaned_input = preprocess_text(input_text)
+            input_vect = vect.transform([cleaned_input])
+
+            # Load the selected model
+            model = models[model_name]
+
+            # Predict category
+            prediction_encoded = model.predict(input_vect)
+            prediction = le.inverse_transform(prediction_encoded)
+
+            # Display prediction
+            st.write(f"Using {model_name}, the article belongs to the category: {prediction[0]}")
+        else:
+            st.write("Please enter some text to classify.")
+
+# Main function to trigger model training or classification based on user input
+if __name__ == '__main__':
+    st.sidebar.title("Options")
+    option = st.sidebar.selectbox("Choose an option", ["Train Models", "Classify Article"])
+
+    if option == "Train Models":
+        st.write("Training models...")
+        train_and_save_models()
+        st.write("Models trained and saved successfully!")
     else:
-        st.write("Please enter some text to classify.")
-
-# Model Evaluation (if desired, you can keep this section as is)
-st.write("## Model Performance")
-y_pred_train = clf.predict(X_train)
-y_pred_test = clf.predict(X_test)
-
-train_accuracy = metrics.accuracy_score(y_train, y_pred_train)
-test_accuracy = metrics.accuracy_score(y_test, y_pred_test)
-
-st.write(f"Training accuracy: {train_accuracy}")
-st.write(f"Test accuracy: {test_accuracy}")
+        classify_text()
