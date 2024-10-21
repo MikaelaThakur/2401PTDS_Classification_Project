@@ -1,80 +1,93 @@
-"""
-
-    Simple Streamlit webserver application for serving developed classification
-	models.
-
-    Author: ExploreAI Academy.
-
-    Note:
-    ---------------------------------------------------------------------
-    Please follow the instructions provided within the README.md file
-    located within this directory for guidance on how to use this script
-    correctly.
-    ---------------------------------------------------------------------
-
-    Description: This file is used to launch a minimal streamlit web
-	application. You are expected to extend the functionality of this script
-	as part of your predict project.
-
-	For further help with the Streamlit framework, see:
-
-	https://docs.streamlit.io/en/latest/
-
-"""
-# Streamlit dependencies
-import streamlit as st
-import joblib,os
-
-# Data dependencies
 import pandas as pd
+import string
+import joblib
+import streamlit as st
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.svm import SVC
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from sklearn import metrics
+import time
 
-# Vectorizer
-#news_vectorizer = open("streamlit/tfidfvect.pkl","rb")
-#test_cv = joblib.load(news_vectorizer) # loading your vectorizer from the pkl file
+# Preprocess text
+def preprocess_text(text):
+    text = text.lower()
+    punc_numbers = string.punctuation + '0123456789'
+    return ''.join([char for char in text if char not in punc_numbers])
 
-# Load your raw data
-#raw = pd.read_csv("streamlit/train.csv")
+# Load datasets
+def load_data():
+    train_articles = pd.read_csv('https://raw.githubusercontent.com/Jana-Liebenberg/2401PTDS_Classification_Project/refs/heads/main/Data/processed/train.csv')
+    test_articles = pd.read_csv('https://raw.githubusercontent.com/Jana-Liebenberg/2401PTDS_Classification_Project/refs/heads/main/Data/processed/test.csv')
+    train_articles['combined_text'] = train_articles['headlines'] + ' ' + train_articles['description'] + ' ' + train_articles['content']
+    test_articles['combined_text'] = test_articles['headlines'] + ' ' + test_articles['description'] + ' ' + test_articles['content']
+    train_articles['combined_text'] = train_articles['combined_text'].apply(preprocess_text)
+    test_articles['combined_text'] = test_articles['combined_text'].apply(preprocess_text)
+    return train_articles, test_articles
 
-# The main function where we will build the actual app
-def main():
-	"""News Classifier App with Streamlit """
+# Train models and save
+def train_and_save_models():
+    train_articles, test_articles = load_data()
+    vect = CountVectorizer(stop_words='english')
+    X_train = vect.fit_transform(train_articles['combined_text'])
+    y_train = train_articles['category']
+    le = LabelEncoder()
+    y_train_encoded = le.fit_transform(y_train)
+    
+    models = {
+        'Logistic Regression': LogisticRegression(),
+        'KNN': KNeighborsClassifier(3),
+        'SVC Linear': SVC(kernel="linear", C=0.025),
+        'SVC RBF': SVC(gamma=2, C=1)
+    }
 
-	# Creates a main title and subheader on your page -
-	# these are static across all pages
-	st.title("News Classifer")
-	st.subheader("Analysing news articles")
+    # Train and save models
+    for name, model in models.items():
+        start_time = time.time()
+        model.fit(X_train, y_train_encoded)
+        joblib.dump(model, f'{name}.pkl')
+        st.write(f"Model {name} trained in {time.time() - start_time:.2f} seconds.")
 
-	# Creating sidebar with selection box -
-	# you can create multiple pages this way
-	options = ["Prediction", "Information"]
-	selection = st.sidebar.selectbox("Choose Option", options)
+    joblib.dump(vect, 'vectorizer.pkl')
+    joblib.dump(le, 'label_encoder.pkl')
+    st.write("All models trained and saved successfully!")
 
-	# Building out the "Information" page
-	if selection == "Information":
-		st.info("General Information")
-		# You can read a markdown file from supporting resources folder
-		st.markdown("Some information here")
+# Classify text
+def classify_text():
+    st.title("News Article Classifier")
+    input_text = st.text_area("Enter the news article text here:")
+    vect = joblib.load('vectorizer.pkl')
+    le = joblib.load('label_encoder.pkl')
+    
+    models = {
+        'Logistic Regression': joblib.load('Logistic Regression.pkl'),
+        'KNN': joblib.load('KNN.pkl'),
+        'SVC Linear': joblib.load('SVC Linear.pkl'),
+        'SVC RBF': joblib.load('SVC RBF.pkl')
+    }
+    
+    model_name = st.selectbox("Choose a model", list(models.keys()))
+    
+    if st.button("Classify"):
+        if input_text:
+            cleaned_input = preprocess_text(input_text)
+            input_vect = vect.transform([cleaned_input])
+            model = models[model_name]
+            prediction_encoded = model.predict(input_vect)
+            prediction = le.inverse_transform(prediction_encoded)
+            st.write(f"Using {model_name}, the article belongs to the category: {prediction[0]}")
+        else:
+            st.write("Please enter some text to classify.")
 
-		
-	# Building out the predication page
-	if selection == "Prediction":
-		st.info("Prediction with ML Models")
-		# Creating a text box for user input
-		news_text = st.text_area("Enter Text","Type Here")
-
-		if st.button("Classify"):
-			# Transforming user input with vectorizer
-			vect_text = test_cv.transform([news_text]).toarray()
-			# Load your .pkl file with the model of your choice + make predictions
-			# Try loading in multiple models to give the user a choice
-			predictor = joblib.load(open(os.path.join("streamlit/Logistic_regression.pkl"),"rb"))
-			prediction = predictor.predict(vect_text)
-
-			# When model has successfully run, will print prediction
-			# You can use a dictionary or similar structure to make this output
-			# more human interpretable.
-			st.success("Text Categorized as: {}".format(prediction))
-
-# Required to let Streamlit instantiate our web app.  
+# Main function for Streamlit
 if __name__ == '__main__':
-	main()
+    st.sidebar.title("Options")
+    option = st.sidebar.selectbox("Choose an option", ["Train Models", "Classify Article"])
+
+    if option == "Train Models":
+        st.write("Training models...")
+        train_and_save_models()
+    else:
+        classify_text()
